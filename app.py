@@ -7,45 +7,46 @@ st.set_page_config(page_title="Universal RE Analyzer", layout="wide")
 
 def extract_area_final(text):
     if pd.isna(text): return 0
-    # Normalize Marathi characters and remove commas
+    # Normalize Marathi text to handle all variations
     text = text.replace(',', '').replace('ओेपन', 'ओपन').replace('कार्पेट', 'कारपेट').replace('ौ.मी', 'चौ.मी')
     
-    # Identify the unit-specific segment to skip land/survey areas
-    unit_keywords = ['फ्लॅट', 'युनिट', 'विंग', 'flat', 'unit', 'मजल्यावरील', 'floor']
-    unit_start_idx = 0
-    for kw in unit_keywords:
-        match = re.search(kw, text, re.IGNORECASE)
-        if match:
-            unit_start_idx = match.start()
-            break
+    sqmt_total = 0.0
+    sqft_total = 0.0
     
-    search_text = text[unit_start_idx:]
+    # regex for number: ([\d\.]+)
+    # We find every number and look at the words immediately following it
+    matches = list(re.finditer(r'(\d+\.?\d*)', text))
     
-    # Precise Regex for SQMT and SQFT
-    sqmt_pattern = r'(\d+\.?\d*)\s*(?:चौ[\.\s]*मी[\.\s]*|चौरस\s*मीटर|sq[\.\s]*mt[r]*)'
-    sqft_pattern = r'(\d+\.?\d*)\s*(?:चौ[\.\s]*फ[ुू][टट][\.\s]*|फ[ुू][टट][\.\s]*|sq[\.\s]*ft|square\s*feet)'
-    
-    sqmt_matches = list(re.finditer(sqmt_pattern, search_text, re.IGNORECASE))
-    sqft_matches = list(re.finditer(sqft_pattern, search_text, re.IGNORECASE))
-    
-    def get_valid_sum(matches, full_text):
-        total = 0.0
-        for m in matches:
-            val = float(m.group(1))
-            # Check prefix for "parking" to exclude those numbers
-            prefix = full_text[max(0, m.start()-40):m.start()].lower()
-            if not any(k in prefix for k in ['पार्किंग', 'पार्कींग', 'parking', 'park']):
-                total += val
-        return total
+    for m in matches:
+        val = float(m.group(1))
+        
+        # 1. Get Context (40 chars before, 40 chars after)
+        suffix = text[m.end():m.end()+40].lower()
+        prefix = text[max(0, m.start()-40):m.start()].lower()
+        
+        # 2. Exclude Land/Survey numbers (If 'survey', 'स.नं', or 'Hissa' is nearby)
+        if any(k in prefix for k in ['सर्व्हे', 'स.नं', 'गट नं', 'survey', 'hissa']):
+            continue
+            
+        # 3. Exclude Parking (If 'parking' or 'पार्किंग' is nearby)
+        if any(k in prefix for k in ['पार्किंग', 'पार्कींग', 'parking', 'park']):
+            continue
 
-    # Calculation logic: Priority to SQMT, Fallback to SQFT
-    total_sqmt = get_valid_sum(sqmt_matches, search_text)
-    if total_sqmt > 0:
-        return total_sqmt
-    else:
-        total_sqft = get_valid_sum(sqft_matches, search_text)
-        # Apply the exact formula provided: sqmt = sqft / 10.764
-        return total_sqft / 10.764 if total_sqft > 0 else 0
+        # 4. Identify SQMT values
+        if any(k in suffix for k in ['चौ.मी', 'चौरस मीटर', 'sq.mt', 'sqmt', 'sq.mtr']):
+            sqmt_total += val
+        
+        # 5. Identify SQFT values (only if we need fallback later)
+        elif any(k in suffix for k in ['चौ.फुट', 'चौ.फूट', 'चौ. फूट', 'sq.ft', 'sqft', 'square feet', 'फूट', 'फुट']):
+            sqft_total += val
+
+    # Logic: Use SQMT sum if found. If 0, use SQFT sum and divide by 10.764
+    if sqmt_total > 0:
+        return sqmt_total
+    elif sqft_total > 0:
+        return sqft_total / 10.764
+    
+    return 0
 
 st.title("🏙️ Professional Real Estate Analyzer")
 st.markdown("---")
@@ -63,7 +64,7 @@ if uploaded_file:
         bhk_ranges = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
 
     if st.button("🚀 Generate Final.xlsx"):
-        # Processing - No Rounding
+        # Processing - Strict Precision, No Rounding
         df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_area_final)
         df['Carpet Area(SQ.FT)'] = df['Carpet Area(SQ.MT)'] * 10.764
         df['Saleable Area'] = df['Carpet Area(SQ.FT)'] * loading
@@ -79,25 +80,22 @@ if uploaded_file:
             return ""
         df['Configuration'] = df['Carpet Area(SQ.FT)'].apply(get_bhk)
 
-        # Excel Export with Sheet Replication - No Possession Date
+        # Excel Export with exact sheet structure
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Sheet: in
             df.to_excel(writer, index=False, sheet_name='in')
             
-            # Sheet: summary
+            # summary
             summ = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)']).agg({
                 'APR': 'mean', 'Property': 'count'
             }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
-            # Reorder to match your manual structure
-            summ = summ[['Property', 'Configuration', 'Carpet Area(SQ.FT)', 'Average of APR', 'Count of Property']]
             summ.to_excel(writer, startrow=2, index=False, sheet_name='summary')
             
             # Sheet1 (No Headers)
             s1 = df['Property'].value_counts().reset_index()
             s1.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
             
-            # Sheet2
+            # Sheet2 (With Grand Total)
             s2 = df.groupby('Property')['Consideration Value'].count().reset_index()
             s2.columns = ['Property', 'Count of Consideration Value']
             s2 = pd.concat([s2, pd.DataFrame([['Grand Total', s2.iloc[:,1].sum()]], columns=s2.columns)])
