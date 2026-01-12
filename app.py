@@ -29,7 +29,7 @@ def extract_area_final(text):
     sqft_matches = list(re.finditer(sqft_pattern, search_text, re.IGNORECASE))
     
     def get_valid_sum(matches, full_text):
-        total = 0
+        total = 0.0
         for m in matches:
             val = float(m.group(1))
             # Check prefix for "parking" to exclude those numbers
@@ -44,6 +44,7 @@ def extract_area_final(text):
         return total_sqmt
     else:
         total_sqft = get_valid_sum(sqft_matches, search_text)
+        # Apply the exact formula provided: sqmt = sqft / 10.764
         return total_sqft / 10.764 if total_sqft > 0 else 0
 
 st.title("🏙️ Professional Real Estate Analyzer")
@@ -62,7 +63,7 @@ if uploaded_file:
         bhk_ranges = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
 
     if st.button("🚀 Generate Final.xlsx"):
-        # Processing
+        # Processing - No Rounding
         df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_area_final)
         df['Carpet Area(SQ.FT)'] = df['Carpet Area(SQ.MT)'] * 10.764
         df['Saleable Area'] = df['Carpet Area(SQ.FT)'] * loading
@@ -77,21 +78,22 @@ if uploaded_file:
             except: pass
             return ""
         df['Configuration'] = df['Carpet Area(SQ.FT)'].apply(get_bhk)
-        df['Possession'] = pd.to_datetime(df['Completion Date']).dt.strftime('%B, %Y')
 
-        # Excel Export with Sheet Replication
+        # Excel Export with Sheet Replication - No Possession Date
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             # Sheet: in
             df.to_excel(writer, index=False, sheet_name='in')
             
             # Sheet: summary
-            summ = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)', 'Possession']).agg({
+            summ = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)']).agg({
                 'APR': 'mean', 'Property': 'count'
             }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
+            # Reorder to match your manual structure
+            summ = summ[['Property', 'Configuration', 'Carpet Area(SQ.FT)', 'Average of APR', 'Count of Property']]
             summ.to_excel(writer, startrow=2, index=False, sheet_name='summary')
             
-            # Sheet1
+            # Sheet1 (No Headers)
             s1 = df['Property'].value_counts().reset_index()
             s1.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
             
