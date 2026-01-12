@@ -3,93 +3,107 @@ import pandas as pd
 import re
 import io
 
-st.set_page_config(page_title="Universal RE Analyzer", layout="wide")
+st.set_page_config(page_title="RE Analyzer Pro", layout="wide")
 
-def extract_total_area(text):
+def extract_area_logic(text):
+    """
+    Intelligently extracts and sums Carpet + Balcony areas while ignoring Parking.
+    """
     if pd.isna(text): return 0
     
-    # Standardize Marathi text to handle variations
-    text = text.replace('ओेपन', 'ओपन').replace('ौ.मी', 'चौ.मी')
+    # Normalize Marathi variations to ensure regex matches
+    text = text.replace('ओेपन', 'ओपन').replace('ौ.मी', 'चौ.मी').replace(',', '')
     
-    # Regex designed to capture numbers even if there is punctuation in between
-    # Looks for digits/decimals after keywords
-    carpet_match = re.search(r'(?:कारपेट क्षेत्र|carpet area)[^\d]*([\d\.]+)', text, re.IGNORECASE)
-    balcony_match = re.search(r'(?:ओपन बाल्कनी|बाल्कनी|सीटआऊट|dry balcony)[^\d]*([\d\.]+)', text, re.IGNORECASE)
-    fallback = re.search(r'(?:फ्लॅट|unit|युनिट)[^\d]*क्षेत्र[^\d]*([\d\.]+)', text, re.IGNORECASE)
-
-    def safe_float(match):
-        if not match: return 0
-        val = match.group(1).strip('.') # Remove stray dots
-        try:
-            return float(val) if val else 0
-        except ValueError:
-            return 0
-
-    c_val = safe_float(carpet_match)
-    b_val = safe_float(balcony_match)
+    # Extract all numbers associated with SQMT (चौ.मी / चौरस मीटर)
+    pattern = r'([\d\.]+)\s*(?:चौ\.मी|चौरस मीटर|sq\.?mt|sq\.?mtr)'
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    areas = [float(m) for m in matches]
     
-    # Logic: Sum Carpet + Balcony. If both missing, try fallback.
-    total = c_val + b_val
-    if total == 0:
-        total = safe_float(fallback)
-        
-    return total
+    if len(areas) >= 2:
+        # If 'Parking' is mentioned, we assume the last area is parking and exclude it
+        if "पार्कींग" in text or "parking" in text.lower():
+            # Sum only the first two (Carpet + Balcony)
+            return sum(areas[:2])
+        # If no parking mentioned, sum everything found
+        return sum(areas)
+    elif len(areas) == 1:
+        return areas[0]
+    
+    return 0
 
-st.title("🏙️ Universal Real Estate Processor")
+st.title("🏙️ Real Estate Raw to Final Processor")
 st.markdown("---")
 
-uploaded_file = st.file_uploader("1. Upload Raw Excel", type=['xlsx'])
+uploaded_file = st.file_uploader("1. Upload Raw Excel File", type=['xlsx'])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
-    # MOVED BACK TO MAIN PAGE:
-    st.header("2. Global Configuration")
+    st.header("2. Analysis Parameters")
     col1, col2 = st.columns(2)
+    
     with col1:
-        global_loading = st.number_input("Loading Factor (Applied to all)", 1.0, 2.0, 1.4, step=0.01)
+        user_loading = st.number_input("Enter Loading Factor (e.g. 1.4 for 40%)", 1.0, 2.0, 1.4, step=0.01)
+    
     with col2:
-        global_bhk = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
+        user_bhk = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
 
-    if st.button("🚀 Process & Generate Final Excel"):
-        # Process Areas
-        df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_total_area)
-        df['Carpet Area(SQ.FT)'] = df['Carpet Area(SQ.MT)'] * 10.7639
+    if st.button("🚀 Process Data"):
+        # 1. Extraction
+        df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
         
-        def apply_logic(row):
-            saleable = row['Carpet Area(SQ.FT)'] * global_loading
-            area_ft = row['Carpet Area(SQ.FT)']
-            label = "Other"
+        # 2. Formula: sqft = sqmt * 10.764
+        df['Carpet Area(SQ.FT)'] = df['Carpet Area(SQ.MT)'] * 10.764
+        
+        # 3. Formula: saleable area = sqft * loading
+        def apply_bhk_and_saleable(row):
+            # Calculate Saleable
+            saleable = row['Carpet Area(SQ.FT)'] * user_loading
+            
+            # Categorize BHK
+            area = row['Carpet Area(SQ.FT)']
+            bhk_label = "Other"
             try:
-                for r in global_bhk.split(','):
+                for r in user_bhk.split(','):
                     limits, name = r.split(':')
                     low, high = map(float, limits.split('-'))
-                    if low <= area_ft <= high:
-                        label = name.strip()
+                    if low <= area <= high:
+                        bhk_label = name.strip()
                         break
             except: pass
-            return pd.Series([saleable, label])
+            return pd.Series([saleable, bhk_label])
 
-        df[['Saleable Area', 'Configuration']] = df.apply(apply_logic, axis=1)
+        df[['Saleable Area', 'Configuration']] = df.apply(apply_bhk_and_saleable, axis=1)
+        
+        # 4. Formula: apr = consideration value / saleable area
         df['APR'] = df['Consideration Value'] / df['Saleable Area']
         
-        # Create Summary (Matching your manual file structure)
+        # --- GENERATE SUMMARY SHEETS ---
+        
+        # Summary (Grouped by Property, Configuration, and Area)
         summary = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)']).agg({
-            'APR': 'mean', 'Property': 'count'
+            'APR': 'mean', 
+            'Property': 'count'
         }).rename(columns={'Property': 'Count of Property', 'APR': 'Average of APR'}).reset_index()
 
-        # Output to Excel with multiple sheets
+        # Property Counts (Sheet1/Sheet2 style)
+        counts = df['Property'].value_counts().reset_index()
+        counts.columns = ['Property', 'Count']
+
+        # --- EXCEL GENERATION ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='in')
             summary.to_excel(writer, index=False, sheet_name='summary')
-            # Property Counts sheet (Sheet1/Sheet2 style)
-            counts = df['Property'].value_counts().reset_index()
-            counts.columns = ['Property', 'Count']
-            counts.to_excel(writer, index=False, sheet_name='Property Counts')
+            counts.to_excel(writer, index=False, sheet_name='Sheet1')
 
-        st.success("Transformation complete!")
-        st.download_button("📥 Download Final_Corrected.xlsx", output.getvalue(), "Final_Corrected.xlsx")
+        st.success("Analysis Complete! All formulas applied correctly.")
+        st.download_button(
+            label="📥 Download Final.xlsx",
+            data=output.getvalue(),
+            file_name="Final_Processed.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         
-        st.subheader("Data Preview")
-        st.dataframe(summary.head(10))
+        st.subheader("Results Preview")
+        st.dataframe(summary)
