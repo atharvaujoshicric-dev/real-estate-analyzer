@@ -3,105 +3,109 @@ import pandas as pd
 import re
 import io
 
-st.set_page_config(page_title="Real Estate Analyzer Pro", layout="wide")
+st.set_page_config(page_title="Universal RE Analyzer", layout="wide")
 
-def extract_area_refined(text):
+def extract_area_final(text):
     if pd.isna(text): return 0
-    # Standardize Marathi text
-    text = text.replace('कार्पेट', 'कारपेट').replace('ओेपन', 'ओपन').replace('ौ.मी', 'चौ.मी').replace(',', '')
+    # Normalize Marathi characters and remove commas
+    text = text.replace(',', '').replace('ओेपन', 'ओपन').replace('कार्पेट', 'कारपेट').replace('ौ.मी', 'चौ.मी')
     
-    # Locate where the unit details start (skip land/survey info)
-    unit_start = re.search(r'(?:फ्लॅट|युनिट|विंग|flat|unit|building)', text, re.IGNORECASE)
-    search_text = text[unit_start.start():] if unit_start else text
+    # Identify the unit-specific segment to skip land/survey areas
+    unit_keywords = ['फ्लॅट', 'युनिट', 'विंग', 'flat', 'unit', 'मजल्यावरील', 'floor']
+    unit_start_idx = 0
+    for kw in unit_keywords:
+        match = re.search(kw, text, re.IGNORECASE)
+        if match:
+            unit_start_idx = match.start()
+            break
     
-    # Regex to find numbers followed by SQMT keywords
-    pattern = r'([\d\.]+)\s*(?:चौ[\.\s]*मी|चौरस मीटर|sq[\.\s]*mt)'
-    matches = re.findall(pattern, search_text, re.IGNORECASE)
+    search_text = text[unit_start_idx:]
     
-    # Capture context for each number to check for "parking"
-    total_area = 0
-    # Find all matches with 30 characters of preceding context
-    context_matches = re.finditer(r'(.{0,30})([\d\.]+)\s*(?:चौ[\.\s]*मी|चौरस मीटर|sq[\.\s]*mt)', search_text, re.IGNORECASE)
+    # Precise Regex for SQMT and SQFT
+    sqmt_pattern = r'(\d+\.?\d*)\s*(?:चौ[\.\s]*मी[\.\s]*|चौरस\s*मीटर|sq[\.\s]*mt[r]*)'
+    sqft_pattern = r'(\d+\.?\d*)\s*(?:चौ[\.\s]*फ[ुू][टट][\.\s]*|फ[ुू][टट][\.\s]*|sq[\.\s]*ft|square\s*feet)'
     
-    for m in context_matches:
-        prefix = m.group(1).lower()
-        val = float(m.group(2))
-        # Exclude if parking is mentioned or if value is too large (likely land)
-        if not any(k in prefix for k in ['पार्किंग', 'पार्कींग', 'parking']) and val < 400:
-            total_area += val
-            
-    return total_area
+    sqmt_matches = list(re.finditer(sqmt_pattern, search_text, re.IGNORECASE))
+    sqft_matches = list(re.finditer(sqft_pattern, search_text, re.IGNORECASE))
+    
+    def get_valid_sum(matches, full_text):
+        total = 0
+        for m in matches:
+            val = float(m.group(1))
+            # Check prefix for "parking" to exclude those numbers
+            prefix = full_text[max(0, m.start()-40):m.start()].lower()
+            if not any(k in prefix for k in ['पार्किंग', 'पार्कींग', 'parking', 'park']):
+                total += val
+        return total
 
-st.title("🏙️ Real Estate Raw to Final Processor")
+    # Calculation logic: Priority to SQMT, Fallback to SQFT
+    total_sqmt = get_valid_sum(sqmt_matches, search_text)
+    if total_sqmt > 0:
+        return total_sqmt
+    else:
+        total_sqft = get_valid_sum(sqft_matches, search_text)
+        return total_sqft / 10.764 if total_sqft > 0 else 0
 
-uploaded_file = st.file_uploader("Upload Raw Excel", type=['xlsx'])
+st.title("🏙️ Professional Real Estate Analyzer")
+st.markdown("---")
+
+uploaded_file = st.file_uploader("1. Upload Raw Excel", type=['xlsx'])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
-    st.header("Settings")
+    st.header("2. Analysis Parameters")
     col1, col2 = st.columns(2)
     with col1:
-        loading = st.number_input("Loading Factor", 1.0, 2.0, 1.4, step=0.01)
+        loading = st.number_input("Enter Loading Factor", 1.0, 2.0, 1.4, step=0.01)
     with col2:
-        bhk_input = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
+        bhk_ranges = st.text_input("BHK Ranges (SQFT)", "0-700:1 BHK, 701-1000:2 BHK, 1001-2000:3 BHK")
 
-    if st.button("Generate Final Excel"):
-        # 1. Calculations
-        df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_area_refined)
+    if st.button("🚀 Generate Final.xlsx"):
+        # Processing
+        df['Carpet Area(SQ.MT)'] = df['Property Description'].apply(extract_area_final)
         df['Carpet Area(SQ.FT)'] = df['Carpet Area(SQ.MT)'] * 10.764
         df['Saleable Area'] = df['Carpet Area(SQ.FT)'] * loading
         df['APR'] = df['Consideration Value'] / df['Saleable Area']
         
         def get_bhk(area):
             try:
-                for r in bhk_input.split(','):
+                for r in bhk_ranges.split(','):
                     limits, name = r.split(':')
                     low, high = map(float, limits.split('-'))
                     if low <= area <= high: return name.strip()
             except: pass
             return ""
         df['Configuration'] = df['Carpet Area(SQ.FT)'].apply(get_bhk)
-        
-        # Format Possession for summary
-        df['Possession_Str'] = pd.to_datetime(df['Completion Date']).dt.strftime('%B, %Y')
+        df['Possession'] = pd.to_datetime(df['Completion Date']).dt.strftime('%B, %Y')
 
-        # --- DATA SHEETS ---
-        # 1. Summary
-        summary = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)', 'Possession_Str']).agg({
-            'APR': 'mean', 'Property': 'count'
-        }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
-        summary = summary.rename(columns={'Possession_Str': 'Possession'})
-
-        # 2. Sheet1 (No Header)
-        sheet1 = df['Property'].value_counts().reset_index()
-
-        # 3. Sheet2
-        sheet2 = df.groupby('Property')['Consideration Value'].count().reset_index()
-        sheet2.columns = ['Property', 'Count of Consideration Value']
-
-        # 4. Sheet3
-        sheet3 = df.groupby(['Property', 'Rera Code', 'Configuration', 'Carpet Area(SQ.FT)']).agg({
-            'APR': 'mean', 'Property': 'count'
-        }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
-
-        # --- EXCEL EXPORT ---
+        # Excel Export with Sheet Replication
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # In Sheet
-            df.drop(columns=['Possession_Str']).to_excel(writer, index=False, sheet_name='in')
+            # Sheet: in
+            df.to_excel(writer, index=False, sheet_name='in')
             
-            # Summary Sheet (Starting Row 3)
-            summary.to_excel(writer, startrow=2, index=False, sheet_name='summary')
+            # Sheet: summary
+            summ = df.groupby(['Property', 'Configuration', 'Carpet Area(SQ.FT)', 'Possession']).agg({
+                'APR': 'mean', 'Property': 'count'
+            }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
+            summ.to_excel(writer, startrow=2, index=False, sheet_name='summary')
             
-            # Sheet1 (No headers)
-            sheet1.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+            # Sheet1
+            s1 = df['Property'].value_counts().reset_index()
+            s1.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
             
-            # Sheet2 (Starting Row 3)
-            sheet2.to_excel(writer, startrow=2, index=False, sheet_name='Sheet2')
+            # Sheet2
+            s2 = df.groupby('Property')['Consideration Value'].count().reset_index()
+            s2.columns = ['Property', 'Count of Consideration Value']
+            s2 = pd.concat([s2, pd.DataFrame([['Grand Total', s2.iloc[:,1].sum()]], columns=s2.columns)])
+            s2.to_excel(writer, startrow=2, index=False, sheet_name='Sheet2')
             
-            # Sheet3 (Starting Row 3)
-            sheet3.to_excel(writer, startrow=2, index=False, sheet_name='Sheet3')
+            # Sheet3
+            s3 = df.groupby(['Property', 'Rera Code', 'Configuration', 'Carpet Area(SQ.FT)']).agg({
+                'APR': 'mean', 'Property': 'count'
+            }).rename(columns={'APR': 'Average of APR', 'Property': 'Count of Property'}).reset_index()
+            s3.to_excel(writer, startrow=2, index=False, sheet_name='Sheet3')
 
         st.success("File Generated Successfully!")
-        st.download_button("Download Final.xlsx", output.getvalue(), "Final.xlsx")
+        st.download_button("📥 Download Final.xlsx", output.getvalue(), "Final.xlsx")
