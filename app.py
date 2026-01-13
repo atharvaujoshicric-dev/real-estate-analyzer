@@ -87,7 +87,7 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
     # Check for required columns
-    required_cols = ["Property Description", "Consideration value"]
+    required_cols = ["Property Description", "Consideration Value"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     
     if not missing_cols:
@@ -102,10 +102,10 @@ if uploaded_file:
             df['Saleable Area'] = (df['Carpet Area (SQ.FT)'] * loading_factor).round(3)
             
             # 4. Calculate APR (3 decimal places)
-            # APR = Consideration value / Saleable Area
+            # APR = Consideration Value / Saleable Area
             # Handle division by zero or NaN
             df['APR'] = df.apply(
-                lambda row: round(row['Consideration value'] / row['Saleable Area'], 3) 
+                lambda row: round(row['Consideration Value'] / row['Saleable Area'], 3) 
                 if row['Saleable Area'] > 0 else 0, 
                 axis=1
             )
@@ -122,7 +122,7 @@ if uploaded_file:
             
             # Results Preview
             st.subheader("Data Preview")
-            st.dataframe(df[['Property Description', 'Consideration value', 'Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR']].head(15))
+            st.dataframe(df[['Property Description', 'Consideration Value', 'Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR']].head(15))
             
             # Excel download buffer
             output = io.BytesIO()
