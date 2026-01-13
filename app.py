@@ -81,7 +81,7 @@ if uploaded_file:
             
             # Show preview
             st.subheader("Data Preview (First 10 rows)")
-            st.write(df[['Property Description', 'Carpet Area SQ.MT']].head(10))
+            st.write(df[['Property Description', 'Carpet Area (SQ.MT)']].head(10))
             
             # Export to Excel in memory
             output = io.BytesIO()
