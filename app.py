@@ -3,98 +3,111 @@ import pandas as pd
 import re
 import io
 
-def extract_area_refined(text):
+def extract_area_logic(text):
+    """
+    Advanced logic to extract property area from Marathi text.
+    Handles vowels variations, Metric/Imperial units, and parking exclusion.
+    """
     if pd.isna(text) or text == "":
         return 0.0
     
-    # 1. Cleanup: Standardize spaces and remove tabs/newlines
+    # 1. Standardize text
     text = " ".join(str(text).split())
     text = text.replace(' ,', ',').replace(', ', ',')
-
-    # 2. METRIC EXTRACTION (SQ.MT / चौ.मी.)
-    # This regex handles: चौ.मी., चौ. मी., चौरस मीटर, sq.m., sq mtr
-    metric_regex = r'(\d+\.?\d*)\s*(?:चौ\.?\s*मी\.?|चौरस\s*मी[टत]र|sq\.?\s*m(?:tr)?\.?)'
     
-    # Split text by metric units to check context for each number found
-    segments = re.split(metric_regex, text, flags=re.IGNORECASE)
+    # Define flexible regex patterns
+    # Units
+    m_unit = r'(?:चौ\.?\s*मी\.?|चौरस\s*मी[टत]र|sq\.?\s*m(?:tr)?\.?)'
+    f_unit = r'(?:चौ\.?\s*फू\.?|चौरस\s*फु[टत]|sq\.?\s*f(?:t)?\.?)'
+    # Keywords for "Total Area" (handling spelling variations)
+    total_keywords = r'(?:ए[ककु]ण\s*क्षेत्र|क्षेत्रफळ|total\s*area)'
     
-    total_metric = 0.0
-    found_any_metric = False
+    # --- STEP 1: METRIC EXTRACTION (SQ.MT) ---
+    # Split by metric units to check context (like parking)
+    m_segments = re.split(f'(\d+\.?\d*)\s*{m_unit}', text, flags=re.IGNORECASE)
+    m_vals = []
     
-    # segments format: [text_before, num1, text_between, num2, text_after]
-    for i in range(1, len(segments), 2):
-        val = float(segments[i])
-        context_before = segments[i-1].lower()
-        
-        # LOGIC: 
-        # - Exclude large project/plot areas (>500 sq.m)
-        # - Exclude areas associated with "Parking"
+    for i in range(1, len(m_segments), 2):
+        val = float(m_segments[i])
+        context_before = m_segments[i-1].lower()
+        # Filter: only small areas (<500) and ignore parking
         if 0 < val < 500:
-            if "पार्किंग" in context_before or "parking" in context_before:
-                continue
-            total_metric += val
-            found_any_metric = True
-            
-    if found_any_metric and total_metric > 0:
-        return round(total_metric, 2)
+            if "पार्किंग" not in context_before and "parking" not in context_before:
+                m_vals.append(val)
     
-    # 3. FALLBACK: SQ.FT TO SQ.MT CONVERSION
-    # If no Metric values found, look for Sq.Ft and divide by 10.764
-    ft_regex = r'(\d+\.?\d*)\s*(?:चौ\.?\s*फू\.?|चौरस\s*फूट|sq\.?\s*f(?:t)?\.?)'
-    ft_segments = re.split(ft_regex, text, flags=re.IGNORECASE)
-    
-    total_ft = 0.0
-    found_any_ft = False
-    for i in range(1, len(ft_segments), 2):
-        val = float(ft_segments[i])
-        context_before = ft_segments[i-1].lower()
+    if m_vals:
+        # Check if an explicit "Total" is mentioned in the text
+        t_m_match = re.search(rf'{total_keywords}\s*:?\s*(\d+\.?\d*)\s*{m_unit}', text, re.IGNORECASE)
+        if t_m_match:
+            return round(float(t_m_match.group(1)), 2)
         
-        if 0 < val < 5000: # Typical upper limit for flat sq.ft
-            if "पार्किंग" in context_before or "parking" in context_before:
-                continue
-            total_ft += val
-            found_any_ft = True
-            
-    if found_any_ft and total_ft > 0:
-        return round(total_ft / 10.764, 2)
+        # If no explicit total, check if last value is sum of previous (prevents double counting)
+        if len(m_vals) > 1 and abs(m_vals[-1] - sum(m_vals[:-1])) < 1:
+            return round(m_vals[-1], 2)
+        
+        return round(sum(m_vals), 2)
+        
+    # --- STEP 2: FALLBACK TO IMPERIAL (SQ.FT) ---
+    f_segments = re.split(f'(\d+\.?\d*)\s*{f_unit}', text, flags=re.IGNORECASE)
+    f_vals = []
     
+    for i in range(1, len(f_segments), 2):
+        val = float(f_segments[i])
+        context_before = f_segments[i-1].lower()
+        if 0 < val < 5000:
+            if "पार्किंग" not in context_before and "parking" not in context_before:
+                f_vals.append(val)
+                
+    if f_vals:
+        # Check for explicit Total in Sq.Ft
+        t_f_match = re.search(rf'{total_keywords}\s*:?\s*(\d+\.?\d*)\s*{f_unit}', text, re.IGNORECASE)
+        if t_f_match:
+            return round(float(t_f_match.group(1)) / 10.764, 2)
+        
+        # Avoid double counting components + total
+        if len(f_vals) > 1 and abs(f_vals[-1] - sum(f_vals[:-1])) < 1:
+            return round(f_vals[-1] / 10.764, 2)
+            
+        return round(sum(f_vals) / 10.764, 2)
+
     return 0.0
 
-# --- Streamlit Web Interface ---
-st.set_page_config(page_title="Marathi Property Extractor", page_icon="🏢")
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="Marathi Data Extractor", layout="wide")
 
-st.title("🏠 Marathi Property Area Extractor")
-st.write("Upload your Excel file to extract Carpet + Balcony + Terrace areas automatically.")
+st.title("🏠 Property Data Extraction Tool")
+st.markdown("""
+Extracts **Carpet + Balcony + Terrace** areas from Marathi property descriptions.
+- **Auto-Conversion:** Square Feet is converted to Square Meters ($1 \text{ sq.m.} = 10.764 \text{ sq.ft.}$).
+- **Smart Filter:** Automatically excludes Parking areas and large Project Plot areas.
+""")
 
-uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
+uploaded_file = st.file_uploader("Upload your raw Excel file (.xlsx)", type="xlsx")
 
 if uploaded_file:
-    # Read the file
     df = pd.read_excel(uploaded_file)
     
     if "Property Description" in df.columns:
-        with st.spinner('Extracting data...'):
-            # Apply the logic
-            df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_refined)
+        with st.spinner('Processing Marathi text logic...'):
+            # Run the extraction
+            df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
             
-            st.success("Processing Complete!")
+            st.success("Success! Area extracted for all rows.")
             
-            # Show preview
-            st.subheader("Data Preview (First 10 rows)")
-            st.write(df[['Property Description', 'Carpet Area (SQ.MT)']].head(10))
+            # Show top results
+            st.subheader("Preview of Results")
+            st.dataframe(df[['Property Description', 'Carpet Area (SQ.MT)']].head(20))
             
-            # Export to Excel in memory
+            # Prepare file for download
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
-            processed_data = output.getvalue()
             
-            # Download button
             st.download_button(
-                label="📥 Download Processed Excel File",
-                data=processed_data,
-                file_name="Processed_Property_Data.xlsx",
+                label="📥 Download Ready File",
+                data=output.getvalue(),
+                file_name="Extracted_Property_Data.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
-        st.error("Error: The file must have a column named 'Property Description'.")
+        st.error("Error: Could not find column 'Property Description'. Please check your file.")
