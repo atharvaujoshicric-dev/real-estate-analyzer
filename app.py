@@ -61,13 +61,23 @@ def extract_area_logic(text):
     return 0.0
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Marathi Property Data Extractor", layout="wide")
+st.set_page_config(page_title="Real Estate Data Specialist", layout="wide")
 
-st.title("🏠 Real Estate Marathi Text Extractor")
+st.title("🏠 Property Data Extraction & Saleable Calculator")
 st.markdown("""
-Upload your raw Excel file. This tool will extract area data and calculate both Metric and Imperial values.
-- **Formula Used:** $SQ.FT = SQ.MT \times 10.764$
+Extracts areas from Marathi property descriptions and calculates Saleable Area based on your loading factor.
 """)
+
+# Sidebar for inputs
+st.sidebar.header("Calculation Settings")
+loading_factor = st.sidebar.number_input(
+    "Enter Loading Factor (e.g., 1.35 for 35%)", 
+    min_value=1.0, 
+    max_value=3.0, 
+    value=1.35, 
+    step=0.01,
+    help="Formula: Saleable Area = Carpet Area (SQ.FT) * Loading Factor"
+)
 
 uploaded_file = st.file_uploader("Upload Raw Excel File (.xlsx)", type="xlsx")
 
@@ -75,27 +85,30 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
     if "Property Description" in df.columns:
-        with st.spinner('Calculating areas...'):
+        with st.spinner('Calculating Data...'):
             # 1. Calculate SQ.MT
             df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
             
-            # 2. Calculate SQ.FT based on the SQ.MT value
+            # 2. Calculate SQ.FT
             df['Carpet Area (SQ.FT)'] = (df['Carpet Area (SQ.MT)'] * 10.764).round(2)
             
-            # 3. Logic to move the columns to the end for visibility
+            # 3. Calculate Saleable Area
+            df['Saleable Area'] = (df['Carpet Area (SQ.FT)'] * loading_factor).round(2)
+            
+            # Rearrange columns to put results at the end
             cols = list(df.columns)
-            # Remove them from current position and append to end
-            cols.append(cols.pop(cols.index('Carpet Area (SQ.MT)')))
-            cols.append(cols.pop(cols.index('Carpet Area (SQ.FT)')))
+            result_cols = ['Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area']
+            for col in result_cols:
+                cols.append(cols.pop(cols.index(col)))
             df = df[cols]
             
-            st.success("Calculations Complete!")
+            st.success(f"Processing Complete with a Loading Factor of {loading_factor}!")
             
-            # Preview
-            st.subheader("Preview of Extracted Data")
-            st.dataframe(df[['Property Description', 'Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)']].head(15))
+            # Results Preview
+            st.subheader("Extracted Data Preview")
+            st.dataframe(df[['Property Description', 'Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area']].head(15))
             
-            # Download
+            # Excel download buffer
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
@@ -103,8 +116,8 @@ if uploaded_file:
             st.download_button(
                 label="📥 Download Ready File",
                 data=output.getvalue(),
-                file_name="Property_Data_with_Calculations.xlsx",
+                file_name=f"Property_Saleable_Report_{loading_factor}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
-        st.error("Error: Could not find 'Property Description' column.")
+        st.error("Column 'Property Description' not found in the uploaded file.")
