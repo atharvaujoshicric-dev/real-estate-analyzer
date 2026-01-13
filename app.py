@@ -75,7 +75,7 @@ if uploaded_file:
     if "Property Description" in df.columns:
         with st.spinner('Extracting data...'):
             # Apply the logic
-            df['Carpet Area SQ.MT'] = df['Property Description'].apply(extract_area_refined)
+            df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_refined)
             
             st.success("Processing Complete!")
             
