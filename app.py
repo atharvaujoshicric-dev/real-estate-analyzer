@@ -97,7 +97,7 @@ uploaded_file = st.file_uploader("Upload Raw Excel File (.xlsx)", type="xlsx")
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
-    required_cols = ["Property Description", "Consideration value"]
+    required_cols = ["Property Description", "Consideration Value"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     
     if not missing_cols:
@@ -113,7 +113,7 @@ if uploaded_file:
             
             # 4. APR (3 decimal places)
             df['APR'] = df.apply(
-                lambda row: round(row['Consideration value'] / row['Saleable Area'], 3) 
+                lambda row: round(row['Consideration Value'] / row['Saleable Area'], 3) 
                 if row['Saleable Area'] > 0 else 0, axis=1
             )
             
