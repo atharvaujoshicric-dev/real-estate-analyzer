@@ -60,65 +60,63 @@ def extract_area_logic(text):
 
     return 0.0
 
-def get_config(area, t1, t2, t3, t4):
-    if area <= 0: return "N/A"
-    if area < t1: return "1 BHK"
-    if area < t2: return "2 BHK"
-    if area < t3: return "3 BHK"
-    if area < t4: return "4 BHK"
-    return "4+ BHK"
-
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="Real Estate Data Specialist", layout="wide")
 
-st.title("🏠 Property Master Data Processor")
+st.title("🏠 Property Area, APR & Configuration Calculator")
 st.markdown("""
-Extracts data from Marathi descriptions and calculates SQ.MT, SQ.FT, Saleable, APR, and Configuration.
+Extracts data from Marathi descriptions and calculates SQ.MT, SQ.FT, Saleable Area, APR, and Configuration.
 """)
 
 # Sidebar settings
-st.sidebar.header("1. Loading Calculation")
-loading_factor = st.sidebar.number_input("Loading Factor", value=1.350, format="%.3f")
+st.sidebar.header("Calculation Settings")
 
-st.sidebar.header("2. Configuration Thresholds (SQ.FT)")
-bhk1_max = st.sidebar.number_input("1 BHK: Anything less than (<)", value=550.0)
-bhk2_max = st.sidebar.number_input(f"2 BHK: From {bhk1_max} up to", value=850.0)
-bhk3_max = st.sidebar.number_input(f"3 BHK: From {bhk2_max} up to", value=1300.0)
-bhk4_max = st.sidebar.number_input(f"4 BHK: From {bhk3_max} up to", value=1800.0)
+st.sidebar.subheader("Area Factors")
+loading_factor = st.sidebar.number_input(
+    "Loading Factor", min_value=1.0, max_value=3.0, value=1.35, step=0.001, format="%.3f"
+)
+
+st.sidebar.subheader("Configuration Thresholds (SQ.FT)")
+limit_1bhk = st.sidebar.number_input("1 BHK if Area <", value=600)
+limit_2bhk = st.sidebar.number_input(f"2 BHK if Area < (Must be > {limit_1bhk})", value=850)
+limit_3bhk = st.sidebar.number_input(f"3 BHK if Area < (Must be > {limit_2bhk})", value=1100)
 
 uploaded_file = st.file_uploader("Upload Raw Excel File (.xlsx)", type="xlsx")
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
-    # Check for required columns
     required_cols = ["Property Description", "Consideration Value"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     
     if not missing_cols:
-        with st.spinner('Calculating Master Data...'):
-            # 1. Calculate SQ.MT (Metric)
+        with st.spinner('Calculating Data...'):
+            # 1. SQ.MT
             df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
             
-            # 2. Calculate SQ.FT (3 decimal places)
+            # 2. SQ.FT (3 decimal places)
             df['Carpet Area (SQ.FT)'] = (df['Carpet Area (SQ.MT)'] * 10.764).round(3)
             
-            # 3. Calculate Saleable Area (3 decimal places)
+            # 3. Saleable Area (3 decimal places)
             df['Saleable Area'] = (df['Carpet Area (SQ.FT)'] * loading_factor).round(3)
             
-            # 4. Calculate APR (3 decimal places)
+            # 4. APR (3 decimal places)
             df['APR'] = df.apply(
                 lambda row: round(row['Consideration Value'] / row['Saleable Area'], 3) 
-                if row['Saleable Area'] > 0 else 0, 
-                axis=1
+                if row['Saleable Area'] > 0 else 0, axis=1
             )
             
-            # 5. Calculate Configuration
-            df['Configuration'] = df['Carpet Area (SQ.FT)'].apply(
-                lambda x: get_config(x, bhk1_max, bhk2_max, bhk3_max, bhk4_max)
-            )
+            # 5. Configuration logic
+            def get_config(area):
+                if area <= 0: return "N/A"
+                if area < limit_1bhk: return "1 BHK"
+                if area < limit_2bhk: return "2 BHK"
+                if area < limit_3bhk: return "3 BHK"
+                return "4 BHK"
             
-            # Rearrange columns to put results at the end
+            df['Configuration'] = df['Carpet Area (SQ.FT)'].apply(get_config)
+            
+            # Rearrange columns
             cols = list(df.columns)
             result_cols = ['Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']
             for col in result_cols:
@@ -126,22 +124,21 @@ if uploaded_file:
                     cols.append(cols.pop(cols.index(col)))
             df = df[cols]
             
-            st.success("All calculations updated!")
+            st.success(f"Processing Complete!")
             
             # Results Preview
             st.subheader("Data Preview")
-            preview_cols = ['Property Description', 'Consideration Value', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']
-            st.dataframe(df[preview_cols].head(15))
+            st.dataframe(df[['Property Description', 'Consideration Value', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']].head(15))
             
-            # Excel download buffer
+            # Excel download
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
             
             st.download_button(
-                label="📥 Download Final Report",
+                label="📥 Download Ready File",
                 data=output.getvalue(),
-                file_name="Property_Master_Report.xlsx",
+                file_name=f"Property_Report_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
