@@ -60,80 +60,93 @@ def extract_area_logic(text):
 
     return 0.0
 
+def assign_configuration(area, b1, b2, b3, b4):
+    """Categorizes flat based on closest matching sqft input."""
+    if area <= 0:
+        return "N/A"
+    configs = {
+        "1 BHK": b1,
+        "2 BHK": b2,
+        "3 BHK": b3,
+        "4 BHK": b4
+    }
+    # Determine which config area is closest to the actual carpet area
+    best_match = min(configs, key=lambda x: abs(configs[x] - area))
+    return best_match
+
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="Real Estate Data Specialist", layout="wide")
 
-st.title("🏠 Property Area & APR Calculator")
+st.title("🏠 Property Data Extractor & Configurator")
 st.markdown("""
-Extracts data from Marathi descriptions and calculates SQ.MT, SQ.FT, Saleable Area, and APR.
-- **Conversion:** $1 \text{ SQ.MT} = 10.764 \text{ SQ.FT}$
-- **Precision:** 3 decimal places for SQ.FT, Saleable, and APR.
+Extracts Marathi property data and calculates Metric, Imperial, Saleable, APR, and Configuration columns.
 """)
 
-# Sidebar settings
-st.sidebar.header("Calculation Settings")
-loading_factor = st.sidebar.number_input(
-    "Enter Loading Factor (e.g., 1.35)", 
-    min_value=1.0, 
-    max_value=3.0, 
-    value=1.35, 
-    step=0.001,
-    format="%.3f"
-)
+# Sidebar for Calculation Settings
+st.sidebar.header("1. Calculation Settings")
+loading_factor = st.sidebar.number_input("Loading Factor", min_value=1.0, max_value=3.0, value=1.350, step=0.001, format="%.3f")
+
+st.sidebar.header("2. Configuration Thresholds (SQ.FT)")
+b1_area = st.sidebar.number_input("1 BHK Avg Area", value=450.0)
+b2_area = st.sidebar.number_input("2 BHK Avg Area", value=750.0)
+b3_area = st.sidebar.number_input("3 BHK Avg Area", value=1100.0)
+b4_area = st.sidebar.number_input("4 BHK Avg Area", value=1600.0)
 
 uploaded_file = st.file_uploader("Upload Raw Excel File (.xlsx)", type="xlsx")
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
-    # Check for required columns
-    required_cols = ["Property Description", "Consideration Value"]
+    required_cols = ["Property Description", "Consideration value"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     
     if not missing_cols:
-        with st.spinner('Calculating Data...'):
-            # 1. Calculate SQ.MT (Metric)
+        with st.spinner('Processing...'):
+            # 1. Metric Area
             df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
             
-            # 2. Calculate SQ.FT (3 decimal places)
+            # 2. Imperial Area (3 decimal places)
             df['Carpet Area (SQ.FT)'] = (df['Carpet Area (SQ.MT)'] * 10.764).round(3)
             
-            # 3. Calculate Saleable Area (3 decimal places)
+            # 3. Saleable Area (3 decimal places)
             df['Saleable Area'] = (df['Carpet Area (SQ.FT)'] * loading_factor).round(3)
             
-            # 4. Calculate APR (3 decimal places)
-            # APR = Consideration Value / Saleable Area
-            # Handle division by zero or NaN
+            # 4. APR (3 decimal places)
             df['APR'] = df.apply(
-                lambda row: round(row['Consideration Value'] / row['Saleable Area'], 3) 
-                if row['Saleable Area'] > 0 else 0, 
-                axis=1
+                lambda row: round(row['Consideration value'] / row['Saleable Area'], 3) 
+                if row['Saleable Area'] > 0 else 0, axis=1
             )
             
-            # Rearrange columns to put results at the end
+            # 5. Configuration (Closest match logic)
+            df['Configuration'] = df['Carpet Area (SQ.FT)'].apply(
+                lambda x: assign_configuration(x, b1_area, b2_area, b3_area, b4_area)
+            )
+            
+            # Reorder columns to place new data at the end
             cols = list(df.columns)
-            result_cols = ['Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR']
+            result_cols = ['Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']
             for col in result_cols:
                 if col in cols:
                     cols.append(cols.pop(cols.index(col)))
             df = df[cols]
             
-            st.success(f"Processing Complete! Used Loading Factor: {loading_factor}")
+            st.success("Calculations complete!")
             
-            # Results Preview
+            # Preview
             st.subheader("Data Preview")
-            st.dataframe(df[['Property Description', 'Consideration Value', 'Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR']].head(15))
+            preview_cols = ['Property Description', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']
+            st.dataframe(df[preview_cols].head(15))
             
-            # Excel download buffer
+            # Excel download
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
             
             st.download_button(
-                label="📥 Download Ready File",
+                label="📥 Download Processed Report",
                 data=output.getvalue(),
-                file_name=f"Property_Report_Loading_{loading_factor}.xlsx",
+                file_name="Property_Report_Full.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
-        st.error(f"Missing required columns: {', '.join(missing_cols)}")
+        st.error(f"Missing columns: {', '.join(missing_cols)}")
