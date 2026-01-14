@@ -65,17 +65,13 @@ def determine_config(area, t1, t2, t3):
     if area < t1: return "1 BHK"
     elif area < t2: return "2 BHK"
     elif area < t3: return "3 BHK"
-    else: return "4 BHK"
+    else: return "4 BHK"  # Covers anything equal to or above t3
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="Real Estate Data Specialist", layout="wide")
 
-st.title("🏠 Property Data & Configuration Calculator")
-st.markdown("""
-Extracts data from Marathi descriptions and calculates SQ.MT, SQ.FT, Saleable Area, APR, and Configuration.
-- **Conversion:** $1 \text{ SQ.MT} = 10.764 \text{ SQ.FT}$
-- **APR:** Consideration Value / Saleable Area
-""")
+st.title("🏠 Property Analysis Dashboard")
+st.markdown("Extract Marathi property data and calculate SQ.MT, SQ.FT, Saleable, APR, and Configuration.")
 
 # Sidebar for all adjustable parameters
 st.sidebar.header("Calculation Settings")
@@ -83,9 +79,10 @@ loading_factor = st.sidebar.number_input("Loading Factor", min_value=1.0, value=
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Configuration Thresholds (SQ.FT)")
-t1 = st.sidebar.number_input("1 BHK if area less than:", value=600)
-t2 = st.sidebar.number_input("2 BHK if area less than:", value=850)
-t3 = st.sidebar.number_input("3 BHK if area less than:", value=1100)
+t1 = st.sidebar.number_input("1 BHK Threshold (<)", value=600)
+t2 = st.sidebar.number_input("2 BHK Threshold (<)", value=850)
+t3 = st.sidebar.number_input("3 BHK Threshold (<)", value=1100)
+st.sidebar.info(f"Anything ≥ {t3} will be 4 BHK")
 
 uploaded_file = st.file_uploader("Upload Raw Excel File (.xlsx)", type="xlsx")
 
@@ -96,17 +93,17 @@ if uploaded_file:
     missing_cols = [c for c in required_cols if c not in df.columns]
     
     if not missing_cols:
-        with st.spinner('Processing Data...'):
-            # 1. Metric Area
+        with st.spinner('Processing...'):
+            # 1. Extract SQ.MT
             df['Carpet Area (SQ.MT)'] = df['Property Description'].apply(extract_area_logic)
             
-            # 2. Imperial Area (3 decimal places)
+            # 2. Calculate SQ.FT (3 decimal places)
             df['Carpet Area (SQ.FT)'] = (df['Carpet Area (SQ.MT)'] * 10.764).round(3)
             
-            # 3. Saleable Area (3 decimal places)
+            # 3. Calculate Saleable Area (3 decimal places)
             df['Saleable Area'] = (df['Carpet Area (SQ.FT)'] * loading_factor).round(3)
             
-            # 4. APR (3 decimal places)
+            # 4. Calculate APR (3 decimal places)
             df['APR'] = df.apply(
                 lambda row: round(row['Consideration Value'] / row['Saleable Area'], 3) 
                 if row['Saleable Area'] > 0 else 0, axis=1
@@ -115,19 +112,17 @@ if uploaded_file:
             # 5. Configuration
             df['Configuration'] = df['Carpet Area (SQ.FT)'].apply(lambda x: determine_config(x, t1, t2, t3))
             
-            # Rearrange results to the end
-            cols = list(df.columns)
+            # Explicitly Order Columns: Original Columns + New Columns at the end
+            # We filter out the result_cols from original list to avoid duplicates
             result_cols = ['Carpet Area (SQ.MT)', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']
-            for col in result_cols:
-                if col in cols:
-                    cols.append(cols.pop(cols.index(col)))
-            df = df[cols]
+            base_cols = [c for c in df.columns if c not in result_cols]
+            df = df[base_cols + result_cols]
             
             st.success("Calculations Complete!")
             
             # Preview
-            st.subheader("Data Preview")
-            st.dataframe(df[['Property Description', 'Carpet Area (SQ.FT)', 'Saleable Area', 'APR', 'Configuration']].head(15))
+            st.subheader("Results Preview")
+            st.dataframe(df[result_cols].head(15))
             
             # Export
             output = io.BytesIO()
@@ -137,7 +132,7 @@ if uploaded_file:
             st.download_button(
                 label="📥 Download Ready File",
                 data=output.getvalue(),
-                file_name=f"Property_Analysis_Report.xlsx",
+                file_name="Property_Analysis_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
